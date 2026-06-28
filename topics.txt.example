@@ -1,0 +1,9 @@
+# Topic rotation for the daily scheduled run — one topic per line.
+# Blank lines and lines starting with '#' are ignored.
+# Copy this to topics.txt and edit. The scheduler walks these round-robin,
+# persisting its position in topics.txt.index.json across restarts.
+AI agents in finance
+Lessons from building a side project
+The future of remote work
+Why developer experience matters
+Practical tips for technical writing

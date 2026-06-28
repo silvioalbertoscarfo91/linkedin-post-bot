@@ -1,0 +1,26 @@
+# Environments
+.venv/
+venv/
+env/
+.env
+
+# Secrets / tokens
+*token*.json
+linkedin_token.json
+
+# Local topic rotation + its persisted index
+topics.txt
+*.index.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
