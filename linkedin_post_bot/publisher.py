@@ -1,7 +1,7 @@
 """Publish a chosen candidate to the user's real LinkedIn profile.
 
 ``LinkedInPublisher`` is the IO module that talks to the LinkedIn REST API. Like
-``PostGenerator``, the external boundary (an ``httpx.Client``) is injected so
+``PostTextGenerator``, the external boundary (an ``httpx.Client``) is injected so
 tests can mock it and stay offline/deterministic. Nothing here knows about
 Telegram or the generation API.
 
@@ -35,6 +35,10 @@ TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 AUTHORIZE_URL = "https://www.linkedin.com/oauth/v2/authorization"
 USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
 UGC_POSTS_URL = "https://api.linkedin.com/v2/ugcPosts"
+REGISTER_UPLOAD_URL = "https://api.linkedin.com/v2/assets?action=registerUpload"
+
+# Recipe identifying a feed-share image upload.
+FEEDSHARE_IMAGE_RECIPE = "urn:li:digitalmediaRecipe:feedshare-image"
 
 # Refresh a little before the real expiry to avoid racing the clock.
 EXPIRY_SKEW_SECONDS = 60
@@ -261,6 +265,150 @@ class LinkedInPublisher:
         url = f"https://www.linkedin.com/feed/update/{post_id}"
         logger.info("Published LinkedIn post %s", post_id)
         return url
+
+    def publish_with_image(
+        self, text: str, image_bytes: bytes, alt_text: str | None = None
+    ) -> str:
+        """Publish ``text`` with ``image_bytes`` attached and return the post URL.
+
+        Three-step LinkedIn flow: register an image upload, PUT the raw bytes to
+        the returned upload URL, then create an ``IMAGE`` UGC post referencing
+        the returned asset URN. Any step failing raises ``PublishError`` so the
+        caller never sees a false success.
+
+        Raises:
+            TokenError: If a valid access token cannot be obtained.
+            PublishError: If any step of the upload/post fails.
+        """
+        access_token = self.ensure_token()
+        author_urn = self._resolve_author_urn(access_token)
+
+        upload_url, asset_urn = self._register_image_upload(access_token, author_urn)
+        self._upload_image_bytes(access_token, upload_url, image_bytes)
+
+        media: dict[str, Any] = {
+            "status": "READY",
+            "media": asset_urn,
+        }
+        if alt_text:
+            media["description"] = {"text": alt_text}
+
+        body = {
+            "author": author_urn,
+            "lifecycleState": "PUBLISHED",
+            "specificContent": {
+                "com.linkedin.ugc.ShareContent": {
+                    "shareCommentary": {"text": text},
+                    "shareMediaCategory": "IMAGE",
+                    "media": [media],
+                }
+            },
+            "visibility": {
+                "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
+            },
+        }
+
+        try:
+            response = self._client.post(
+                UGC_POSTS_URL,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "X-Restli-Protocol-Version": "2.0.0",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+            response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 - never claim a false success
+            raise PublishError(
+                f"Failed to publish image post to LinkedIn: {exc}"
+            ) from exc
+
+        post_id = self._extract_post_id(response)
+        if not post_id:
+            raise PublishError(
+                "LinkedIn accepted the request but returned no post id."
+            )
+
+        url = f"https://www.linkedin.com/feed/update/{post_id}"
+        logger.info("Published LinkedIn image post %s", post_id)
+        return url
+
+    def _register_image_upload(
+        self, access_token: str, author_urn: str
+    ) -> tuple[str, str]:
+        """Register a feed-share image upload; return ``(upload_url, asset_urn)``."""
+        body = {
+            "registerUploadRequest": {
+                "recipes": [FEEDSHARE_IMAGE_RECIPE],
+                "owner": author_urn,
+                "serviceRelationships": [
+                    {
+                        "relationshipType": "OWNER",
+                        "identifier": "urn:li:userGeneratedContent",
+                    }
+                ],
+            }
+        }
+        try:
+            response = self._client.post(
+                REGISTER_UPLOAD_URL,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "X-Restli-Protocol-Version": "2.0.0",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:  # noqa: BLE001 - never claim a false success
+            raise PublishError(
+                f"Failed to register LinkedIn image upload: {exc}"
+            ) from exc
+
+        upload_url, asset_urn = self._extract_upload_target(payload)
+        if not upload_url or not asset_urn:
+            raise PublishError(
+                "LinkedIn registerUpload response was missing the upload URL "
+                "or asset URN."
+            )
+        return upload_url, asset_urn
+
+    @staticmethod
+    def _extract_upload_target(payload: Any) -> tuple[str | None, str | None]:
+        """Pull ``(uploadUrl, asset URN)`` out of a registerUpload response."""
+        if not isinstance(payload, dict):
+            return None, None
+        value = payload.get("value")
+        if not isinstance(value, dict):
+            return None, None
+        asset_urn = value.get("asset")
+        upload_url = None
+        mechanism = value.get("uploadMechanism")
+        if isinstance(mechanism, dict):
+            uploader = mechanism.get(
+                "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"
+            )
+            if isinstance(uploader, dict):
+                upload_url = uploader.get("uploadUrl")
+        return upload_url, asset_urn
+
+    def _upload_image_bytes(
+        self, access_token: str, upload_url: str, image_bytes: bytes
+    ) -> None:
+        """PUT the raw image bytes to the registered upload URL."""
+        try:
+            response = self._client.put(
+                upload_url,
+                headers={"Authorization": f"Bearer {access_token}"},
+                content=image_bytes,
+            )
+            response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 - never claim a false success
+            raise PublishError(
+                f"Failed to upload image bytes to LinkedIn: {exc}"
+            ) from exc
 
     @staticmethod
     def _extract_post_id(response: Any) -> str | None:

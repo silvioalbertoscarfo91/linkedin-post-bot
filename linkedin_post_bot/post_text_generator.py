@@ -1,6 +1,6 @@
 """Candidate post generation via NVIDIA's OpenAI-compatible API.
 
-``PostGenerator`` is a pure logic module: topic in, list of candidate strings
+``PostTextGenerator`` is a pure logic module: topic in, list of candidate strings
 out. It has no Telegram or LinkedIn knowledge. The ``openai`` client is
 injected so tests can mock the external boundary and stay offline/deterministic.
 """
@@ -39,28 +39,58 @@ def _unwrap_json(text: str) -> str:
 DEFAULT_MODEL = "mistralai/mistral-medium-3.5-128b"
 MAX_TOKENS = 4096
 MAX_ATTEMPTS = 2
-TEMPERATURE = 0.7
+TEMPERATURE = 0.85
 TOP_P = 1.0
 
-SYSTEM_PROMPT = (
-    "You write LinkedIn posts. Produce distinct, ready-to-publish candidate "
-    "posts on the given topic. Each post must:\n"
-    "- be written in first person, professional but conversational tone;\n"
-    "- be self-contained and publishable without edits;\n"
-    "- respect a reasonable LinkedIn length (roughly 80-200 words, never over "
-    "3000 characters);\n"
-    "- differ meaningfully from the others in angle, structure, or hook.\n"
-    "Return ONLY a JSON object of the form "
-    '{"posts": ["...", "..."]} with exactly the requested number of posts, '
-    "and no other text."
+AUTHOR_PROFILE = (
+    "Senior full-stack engineer in Bern, Switzerland. 5+ years shipping React "
+    "Native, Spring Boot, Kafka, and AWS at scale (incl. a large Swiss "
+    "government customs system). Now building agentic AI systems and tooling, "
+    "hands-on with Claude Code daily. Writes from real engineering experience, "
+    "not thought-leadership abstraction. Opinionated, concrete, allergic to "
+    "hype. Angle: what AI-assisted engineering actually looks like from the "
+    "trenches."
+)
+
+SYSTEM_PROMPT_TEMPLATE = (
+    "You write LinkedIn posts for a software engineer growing a following. "
+    "Audience: engineers, eng leaders, and people building with AI - highly "
+    "technical, allergic to marketing voice and AI-generated filler.\n\n"
+    "AUTHOR (write as this person, in first person, grounded in their real "
+    "experience - never invent specifics that contradict it):\n"
+    "{author_profile}\n\n"
+    "Each post MUST:\n"
+    "- Open with a HOOK in the first line that stops the scroll on its own (a "
+    "sharp claim, a concrete number, a contrarian take, or a 'here's what "
+    "broke' moment). No warm-up, no 'In today's world', no throat-clearing. "
+    "Assume everything after line 2 is hidden behind 'see more' until the hook "
+    "earns the click.\n"
+    "- Make ONE specific, opinionated point backed by a concrete detail, "
+    "story, or number from the author's world. Specificity over breadth. No "
+    "generic advice anyone could write.\n"
+    "- Be skimmable: short lines, frequent line breaks, whitespace. No dense "
+    "paragraphs.\n"
+    "- End with ONE engagement driver: a genuine, easy-to-answer question OR a "
+    "claim sharp enough that people want to reply. Vary this across posts.\n"
+    "- Run 50-180 words. Shorter and punchier beats longer and complete.\n\n"
+    "Across the candidates, vary the FORMAT meaningfully: e.g. one contrarian "
+    "take, one concrete how-it-actually-works lesson, one short story with a "
+    "takeaway. Different hook style each.\n\n"
+    "NEVER use: emojis as bullets or decoration; 'I'm thrilled/excited to'; "
+    "'game-changer', 'leverage', 'unlock', 'in today's fast-paced world', 'let "
+    "that sink in', 'the result?'; the 'It's not X, it's Y' cadence; "
+    "rhetorical-question-then-immediate-answer rhythm; bold section headers. "
+    "Hashtags: 0-3 max, relevant, only at the very end - or none.\n\n"
+    "Return ONLY a JSON object {{\"posts\": [\"...\", \"...\"]}} with exactly "
+    "the requested number of posts, and no other text."
 )
 
 
-class GenerationError(RuntimeError):
+class PostTextGenerationError(RuntimeError):
     """Raised when the model output cannot be turned into ``n`` candidates."""
 
 
-class PostGenerator:
+class PostTextGenerator:
     """Generate candidate LinkedIn posts for a topic using NVIDIA's API."""
 
     def __init__(
@@ -69,10 +99,14 @@ class PostGenerator:
         *,
         model: str = DEFAULT_MODEL,
         max_tokens: int = MAX_TOKENS,
+        author_profile: str = AUTHOR_PROFILE,
     ) -> None:
         self._client = client
         self._model = model
         self._max_tokens = max_tokens
+        self._system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+            author_profile=author_profile
+        )
 
     def generate(
         self,
@@ -89,7 +123,7 @@ class PostGenerator:
                 yields genuinely fresh text.
 
         Raises:
-            GenerationError: If the model never yields exactly ``n`` usable
+            PostTextGenerationError: If the model never yields exactly ``n`` usable
                 candidates after retrying.
         """
         avoid = avoid or []
@@ -104,16 +138,16 @@ class PostGenerator:
                 top_p=TOP_P,
                 response_format={"type": "json_object"},
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": self._system_prompt},
                     {"role": "user", "content": prompt},
                 ],
             )
             try:
                 posts = self._parse(response, n)
-            except GenerationError as exc:
+            except PostTextGenerationError as exc:
                 last_error = str(exc)
                 logger.warning(
-                    "PostGenerator attempt %d/%d failed: %s",
+                    "PostTextGenerator attempt %d/%d failed: %s",
                     attempt,
                     MAX_ATTEMPTS,
                     last_error,
@@ -121,7 +155,7 @@ class PostGenerator:
                 continue
             return posts
 
-        raise GenerationError(
+        raise PostTextGenerationError(
             f"Model did not return {n} valid candidates: {last_error}"
         )
 
@@ -148,23 +182,23 @@ class PostGenerator:
     def _parse(self, response: Any, n: int) -> list[str]:
         text = self._extract_text(response)
         if not text:
-            raise GenerationError("empty model response")
+            raise PostTextGenerationError("empty model response")
 
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise GenerationError(f"response was not valid JSON: {exc}") from exc
+            raise PostTextGenerationError(f"response was not valid JSON: {exc}") from exc
 
         if not isinstance(data, dict) or "posts" not in data:
-            raise GenerationError("response JSON missing 'posts' key")
+            raise PostTextGenerationError("response JSON missing 'posts' key")
 
         raw_posts = data["posts"]
         if not isinstance(raw_posts, list):
-            raise GenerationError("'posts' was not a list")
+            raise PostTextGenerationError("'posts' was not a list")
 
         posts = [p.strip() for p in raw_posts if isinstance(p, str) and p.strip()]
         if len(posts) != n:
-            raise GenerationError(
+            raise PostTextGenerationError(
                 f"expected {n} candidates, got {len(posts)}"
             )
         return posts

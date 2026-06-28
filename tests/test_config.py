@@ -98,3 +98,50 @@ def test_schedule_minute_non_integer_fails():
     env = _base_env() | {"SCHEDULE_MINUTE": "xx"}
     with pytest.raises(ConfigError, match="must be an integer"):
         load_config(env)
+
+
+def test_together_defaults_absent():
+    cfg = load_config(_base_env())
+    assert cfg.together_api_key is None
+    assert cfg.together_image_model == "Qwen/Qwen-Image"
+
+
+def test_together_overrides():
+    env = _base_env() | {
+        "TOGETHER_API_KEY": "tg-1",
+        "TOGETHER_IMAGE_MODEL": "Some/Other-Image",
+    }
+    cfg = load_config(env)
+    assert cfg.together_api_key == "tg-1"
+    assert cfg.together_image_model == "Some/Other-Image"
+
+
+def test_together_image_dimensions_and_allow_text_defaults():
+    cfg = load_config(_base_env())
+    assert cfg.together_image_allow_text is False
+    assert cfg.together_image_width == 1056
+    assert cfg.together_image_height == 1320
+
+
+def test_together_image_dimensions_and_allow_text_overrides():
+    env = _base_env() | {
+        "TOGETHER_IMAGE_ALLOW_TEXT": "true",
+        "TOGETHER_IMAGE_WIDTH": "768",
+        "TOGETHER_IMAGE_HEIGHT": "960",
+    }
+    cfg = load_config(env)
+    assert cfg.together_image_allow_text is True
+    assert cfg.together_image_width == 768
+    assert cfg.together_image_height == 960
+
+
+def test_together_image_allow_text_invalid_fails():
+    env = _base_env() | {"TOGETHER_IMAGE_ALLOW_TEXT": "maybe"}
+    with pytest.raises(ConfigError, match="boolean"):
+        load_config(env)
+
+
+def test_together_image_width_non_integer_fails():
+    env = _base_env() | {"TOGETHER_IMAGE_WIDTH": "wide"}
+    with pytest.raises(ConfigError, match="must be an integer"):
+        load_config(env)

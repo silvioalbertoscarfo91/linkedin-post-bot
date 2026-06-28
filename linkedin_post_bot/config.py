@@ -32,6 +32,15 @@ class Config:
     linkedin_client_secret: str | None = None
     linkedin_redirect_uri: str | None = None
 
+    # Optional AI-generated image (post-image feature). The image feature is
+    # enabled iff ``together_api_key`` is present; otherwise "Add image" is not
+    # offered and text publishing is unaffected.
+    together_api_key: str | None = None
+    together_image_model: str = "Qwen/Qwen-Image"
+    together_image_allow_text: bool = False
+    together_image_width: int = 1056
+    together_image_height: int = 1320
+
     # Scheduled rotation (slice 04).
     topics_path: str = "topics.txt"
     schedule_hour: int = 9
@@ -117,6 +126,11 @@ def load_config(env: dict[str, str] | None = None, *, use_dotenv: bool = True) -
         linkedin_client_id=opt("LINKEDIN_CLIENT_ID"),
         linkedin_client_secret=opt("LINKEDIN_CLIENT_SECRET"),
         linkedin_redirect_uri=opt("LINKEDIN_REDIRECT_URI"),
+        together_api_key=opt("TOGETHER_API_KEY"),
+        together_image_model=opt("TOGETHER_IMAGE_MODEL") or "Qwen/Qwen-Image",
+        together_image_allow_text=opt_bool("TOGETHER_IMAGE_ALLOW_TEXT", False),
+        together_image_width=opt_int("TOGETHER_IMAGE_WIDTH", 1056, lo=256, hi=4096),
+        together_image_height=opt_int("TOGETHER_IMAGE_HEIGHT", 1320, lo=256, hi=4096),
         topics_path=opt("TOPICS_PATH") or "topics.txt",
         schedule_hour=opt_int("SCHEDULE_HOUR", 9, lo=0, hi=23),
         schedule_minute=opt_int("SCHEDULE_MINUTE", 0, lo=0, hi=59),

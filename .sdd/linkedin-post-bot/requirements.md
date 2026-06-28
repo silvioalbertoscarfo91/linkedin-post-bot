@@ -56,7 +56,7 @@ live post.
 - Only the authorized Telegram user can operate the bot.
 - LinkedIn authentication persists across runs without manual re-login under normal token lifetime.
 - Failures (Claude API, Telegram, LinkedIn) produce clear user-facing messages and never silently lose a post or double-post.
-- Automated tests pass for all modules containing logic (PostGenerator, LinkedInPublisher, Orchestrator).
+- Automated tests pass for all modules containing logic (PostTextGenerator, LinkedInPublisher, Orchestrator).
 - README documents one-time setup: Claude API key, Telegram bot token, LinkedIn app credentials + OAuth authorization, topic rotation file, and how to start the bot and the scheduler on macOS.
 
 ## Out of Scope
@@ -98,7 +98,7 @@ live post.
 
 **Modules (deep, isolated interfaces):**
 
-1. `PostGenerator`
+1. `PostTextGenerator`
    - `generate(topic: str, n: int = 3, avoid: list[str] | None = None) -> list[str]`
    - Calls Claude with a system prompt defining LinkedIn tone/length constraints.
    - `avoid` carries previously-shown candidates so "give me 3 more" returns fresh text.
@@ -151,14 +151,14 @@ not assert on prompt wording or private helpers.
 
 **Modules with automated tests (all logic modules, per decision):**
 
-- `PostGenerator` — **unit**. Mock the `openai` client; assert it returns exactly `n`
+- `PostTextGenerator` — **unit**. Mock the `openai` client; assert it returns exactly `n`
   candidates, that `avoid` candidates are excluded from the request context, and that
   malformed model output is handled (e.g. fewer than `n` → error or retry).
 - `LinkedInPublisher` — **unit**. Mock HTTP. Assert: valid token → correct POST payload
   shape and returned URL; expired token → refresh path invoked; HTTP error → raises a
   typed error (no false success). Token persistence read/write round-trips.
 - `Orchestrator` — **integration (in-process)**. Wire real Orchestrator with faked
-  PostGenerator/TelegramBot/LinkedInPublisher. Assert: select → publish called once with
+  PostTextGenerator/TelegramBot/LinkedInPublisher. Assert: select → publish called once with
   the chosen text + confirmation sent; regenerate → new candidates with `avoid` set;
   second callback on a published session → no second publish (idempotency); publish
   failure → error message, status not marked published.

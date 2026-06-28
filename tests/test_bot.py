@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from linkedin_post_bot.bot import (
+    AWAITING_IMAGE_PROMPT_KEY,
     AWAITING_POST_KEY,
     NO_API_KEY_REPLY,
     NO_TOPIC_REPLY,
@@ -133,3 +134,87 @@ async def test_manual_text_ignored_for_unauthorized_user():
     context.chat_data[AWAITING_POST_KEY] = True
     await manual_text_handler(update, context)
     orchestrator.present_manual.assert_not_called()
+
+
+# --- own-prompt capture routing (Task 03) --------------------------------
+
+
+def _add_submit_own_prompt(orchestrator):
+    orchestrator.submit_own_prompt = AsyncMock()
+    return orchestrator
+
+
+@pytest.mark.asyncio
+async def test_image_prompt_captured_and_routed_to_submit():
+    update, context, message, orchestrator = _make_update(
+        42, [], text="a serene mountain at dawn"
+    )
+    _add_submit_own_prompt(orchestrator)
+    context.chat_data[AWAITING_IMAGE_PROMPT_KEY] = "sess-123"
+
+    await manual_text_handler(update, context)
+
+    orchestrator.submit_own_prompt.assert_awaited_once_with(
+        "sess-123", "a serene mountain at dawn"
+    )
+    # Capture flag cleared; manual-post flow untouched.
+    assert AWAITING_IMAGE_PROMPT_KEY not in context.chat_data
+    orchestrator.present_manual.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_image_prompt_capture_does_not_collide_with_posta():
+    # Only the manual-post flag is armed -> routes to present_manual, not image.
+    update, context, message, orchestrator = _make_update(
+        42, [], text="a manual post"
+    )
+    _add_submit_own_prompt(orchestrator)
+    context.chat_data[AWAITING_POST_KEY] = True
+
+    await manual_text_handler(update, context)
+
+    orchestrator.present_manual.assert_awaited_once_with("a manual post", 1000)
+    orchestrator.submit_own_prompt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_image_prompt_capture_takes_precedence_when_both_armed():
+    # If both flags are somehow set, the image capture is consumed first and
+    # nothing is published as a manual post.
+    update, context, message, orchestrator = _make_update(
+        42, [], text="qwen prompt text"
+    )
+    _add_submit_own_prompt(orchestrator)
+    context.chat_data[AWAITING_POST_KEY] = True
+    context.chat_data[AWAITING_IMAGE_PROMPT_KEY] = "sess-9"
+
+    await manual_text_handler(update, context)
+
+    orchestrator.submit_own_prompt.assert_awaited_once_with("sess-9", "qwen prompt text")
+    orchestrator.present_manual.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_image_prompt_capture_ignored_for_unauthorized_user():
+    update, context, message, orchestrator = _make_update(
+        99, [], text="qwen prompt"
+    )
+    _add_submit_own_prompt(orchestrator)
+    context.chat_data[AWAITING_IMAGE_PROMPT_KEY] = "sess-1"
+
+    await manual_text_handler(update, context)
+
+    orchestrator.submit_own_prompt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_empty_image_prompt_clears_flag_and_does_not_submit():
+    update, context, message, orchestrator = _make_update(42, [], text="   ")
+    _add_submit_own_prompt(orchestrator)
+    context.chat_data[AWAITING_IMAGE_PROMPT_KEY] = "sess-1"
+
+    await manual_text_handler(update, context)
+
+    orchestrator.submit_own_prompt.assert_not_called()
+    assert AWAITING_IMAGE_PROMPT_KEY not in context.chat_data
+    message.reply_text.assert_awaited_once()

@@ -39,6 +39,13 @@ PASTE_PROMPT = "Send me the post text in your next message, and I'll show you a 
 # Key in chat_data marking that we're awaiting a pasted post body.
 AWAITING_POST_KEY = "awaiting_manual_post"
 
+OWN_PROMPT_PROMPT = (
+    "Send me the image prompt in your next message, and I'll generate a new preview."
+)
+# Key in chat_data holding the session id awaiting a user-supplied image prompt.
+# Distinct from AWAITING_POST_KEY so the two capture flows never collide.
+AWAITING_IMAGE_PROMPT_KEY = "awaiting_image_prompt_session"
+
 
 def _extract_topic(args: list[str] | None) -> str:
     """Join command arguments into a trimmed topic string."""
@@ -83,6 +90,52 @@ def _manual_keyboard(session_id: str) -> InlineKeyboardMarkup:
     )
 
 
+def _decision_keyboard(session_id: str, *, image_enabled: bool) -> InlineKeyboardMarkup:
+    """Build the Publish / [Add image] / Cancel keyboard for a chosen candidate.
+
+    "Add image" is only offered when the image feature is enabled.
+    """
+    buttons = [InlineKeyboardButton("Publish", callback_data=f"{session_id}:pub")]
+    if image_enabled:
+        buttons.append(
+            InlineKeyboardButton("Add image", callback_data=f"{session_id}:addimg")
+        )
+    buttons.append(
+        InlineKeyboardButton("Cancel", callback_data=f"{session_id}:cancel")
+    )
+    return InlineKeyboardMarkup([buttons])
+
+
+def _image_preview_keyboard(session_id: str) -> InlineKeyboardMarkup:
+    """Build the full control keyboard shown under an image preview.
+
+    Publish (``pubimg``) posts the previewed image with the selected text.
+    Regenerate image (``regimg``) makes a new image from the same prompt.
+    Regenerate prompt (``regprompt``) crafts a new super-prompt then a new image.
+    Provide my own prompt (``ownprompt``) captures the next message as the prompt.
+    Cancel (``cancel``) abandons without posting and strips the keyboard.
+    """
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Publish", callback_data=f"{session_id}:pubimg")],
+            [
+                InlineKeyboardButton(
+                    "Regenerate image", callback_data=f"{session_id}:regimg"
+                ),
+                InlineKeyboardButton(
+                    "Regenerate prompt", callback_data=f"{session_id}:regprompt"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "Provide my own prompt", callback_data=f"{session_id}:ownprompt"
+                )
+            ],
+            [InlineKeyboardButton("Cancel", callback_data=f"{session_id}:cancel")],
+        ]
+    )
+
+
 class TelegramBot:
     """IO shell: renders presentations and acks; delegates logic to Orchestrator."""
 
@@ -107,6 +160,44 @@ class TelegramBot:
             chat_id=chat_id,
             text=f"Preview:\n\n{text}",
             reply_markup=_manual_keyboard(session_id),
+        )
+
+    async def present_decision(
+        self,
+        chat_id: int,
+        session_id: str,
+        chosen: str,
+        *,
+        image_enabled: bool,
+    ) -> None:
+        """Show the chosen candidate with Publish / Add image / Cancel buttons."""
+        await self._application.bot.send_message(
+            chat_id=chat_id,
+            text=f"Selected:\n\n{chosen}",
+            reply_markup=_decision_keyboard(session_id, image_enabled=image_enabled),
+        )
+
+    async def present_image_preview(
+        self, chat_id: int, image_bytes: bytes, session_id: str
+    ) -> None:
+        """Send the generated image as a photo with Publish / Cancel buttons."""
+        await self._application.bot.send_photo(
+            chat_id=chat_id,
+            photo=image_bytes,
+            reply_markup=_image_preview_keyboard(session_id),
+        )
+
+    async def request_own_prompt(self, chat_id: int, session_id: str) -> None:
+        """Prompt for a user-supplied image prompt and arm the capture flag.
+
+        Stores the awaiting session id in this chat's ``chat_data`` under a key
+        distinct from the ``/posta`` flag, so the next plain message routes to
+        the own-prompt flow (see :func:`manual_text_handler`).
+        """
+        self._application.chat_data[chat_id][AWAITING_IMAGE_PROMPT_KEY] = session_id
+        await self._application.bot.send_message(
+            chat_id=chat_id,
+            text=OWN_PROMPT_PROMPT,
         )
 
     async def acknowledge(
@@ -208,10 +299,13 @@ async def posta_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def manual_text_handler(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Capture the next plain message after ``/posta`` as the post body.
+    """Capture the next plain message for whichever capture flow is awaiting.
 
-    Only acts for the authorized user and only when a ``/posta`` is pending; in
-    every other case it is a no-op so ordinary chatter is ignored.
+    Routes to the ``/posta`` manual-post flow (:data:`AWAITING_POST_KEY`) or the
+    image own-prompt flow (:data:`AWAITING_IMAGE_PROMPT_KEY`) - never both, and
+    the two flags are distinct so they can't collide. Only acts for the
+    authorized user and only when a capture is pending; otherwise it is a no-op
+    so ordinary chatter is ignored.
     """
     config: Config = context.application.bot_data["config"]
 
@@ -220,14 +314,29 @@ async def manual_text_handler(
     if not is_authorized(user_id, config.telegram_allowed_user_id):
         return
 
-    if not context.chat_data.get(AWAITING_POST_KEY):
+    awaiting_post = bool(context.chat_data.get(AWAITING_POST_KEY))
+    awaiting_image_session = context.chat_data.get(AWAITING_IMAGE_PROMPT_KEY)
+    if not awaiting_post and not awaiting_image_session:
         return
 
     message = update.effective_message
     if message is None:
         return
 
+    orchestrator = context.application.bot_data["orchestrator"]
     text = (message.text or "").strip()
+
+    if awaiting_image_session:
+        if not text:
+            await message.reply_text(
+                "That message had no text. Tap 'Provide my own prompt' again."
+            )
+            context.chat_data.pop(AWAITING_IMAGE_PROMPT_KEY, None)
+            return
+        context.chat_data.pop(AWAITING_IMAGE_PROMPT_KEY, None)
+        await orchestrator.submit_own_prompt(awaiting_image_session, text)
+        return
+
     if not text:
         await message.reply_text(
             "That message had no text. Send /posta again with the post text."
@@ -236,7 +345,6 @@ async def manual_text_handler(
         return
 
     context.chat_data[AWAITING_POST_KEY] = False
-    orchestrator = context.application.bot_data["orchestrator"]
     await orchestrator.present_manual(text, message.chat_id)
 
 
@@ -294,8 +402,8 @@ def run(config: Config) -> None:
     import httpx
     from openai import OpenAI
 
-    from .generator import PostGenerator
     from .orchestrator import Orchestrator
+    from .post_text_generator import PostTextGenerator
     from .publisher import LinkedInPublisher
 
     application = build_application(config)
@@ -304,11 +412,37 @@ def run(config: Config) -> None:
     # "key required" message (handled in genera_command) and only manual /posta
     # works. Only build the generator when a key is present.
     generator = None
+    nvidia_client = None
     if config.nvidia_api_key:
-        client = OpenAI(
+        nvidia_client = OpenAI(
             api_key=config.nvidia_api_key, base_url=config.nvidia_base_url
         )
-        generator = PostGenerator(client, model=config.nvidia_model)
+        generator = PostTextGenerator(nvidia_client, model=config.nvidia_model)
+
+    # Optional AI image feature: enabled only when TOGETHER_API_KEY is present
+    # (and the NVIDIA client exists to craft the super prompt). Absent -> the
+    # orchestrator reports the feature disabled and text publishing is
+    # unaffected.
+    prompt_crafter = None
+    image_generator = None
+    if config.together_api_key and nvidia_client is not None:
+        from together import Together
+
+        from .image_generator import ImageGenerator
+        from .prompt_crafter import PromptCrafter
+
+        prompt_crafter = PromptCrafter(
+            nvidia_client,
+            model=config.nvidia_model,
+            allow_text=config.together_image_allow_text,
+        )
+        image_generator = ImageGenerator(
+            Together(api_key=config.together_api_key),
+            model=config.together_image_model,
+            allow_text=config.together_image_allow_text,
+            width=config.together_image_width,
+            height=config.together_image_height,
+        )
 
     bot = TelegramBot(application)
 
@@ -318,7 +452,12 @@ def run(config: Config) -> None:
         client_secret=config.linkedin_client_secret,
     )
     orchestrator = Orchestrator(
-        generator, bot, publisher, dry_run=config.dry_run
+        generator,
+        bot,
+        publisher,
+        dry_run=config.dry_run,
+        prompt_crafter=prompt_crafter,
+        image_generator=image_generator,
     )
     application.bot_data["orchestrator"] = orchestrator
 

@@ -48,7 +48,7 @@ generation → presentation → callback → regenerate loop.
 
 ### Implementation steps
 
-- [x] Implement `PostGenerator.generate(topic, n=3, avoid=None)` using the `openai` SDK against NVIDIA's OpenAI-compatible API + system prompt for LinkedIn tone/length.
+- [x] Implement `PostTextGenerator.generate(topic, n=3, avoid=None)` using the `openai` SDK against NVIDIA's OpenAI-compatible API + system prompt for LinkedIn tone/length.
 - [x] Validate model output yields exactly `n` candidates; retry/raise on malformed output.
 - [x] Implement `TelegramBot.present(chat_id, posts)` rendering 3 numbered candidates + 4 inline buttons; callback data = `<session_id>:<action>` (`sel1|sel2|sel3|regen`).
 - [x] Session state map `{session_id: {topic, candidates, status}}`; status `open`.
@@ -61,11 +61,11 @@ generation → presentation → callback → regenerate loop.
 - [x] "Give me 3 more" returns three new candidates on the same topic, differing from prior set (UAT 3). *(verified: `test_regenerate_uses_avoid_with_previous_candidates` — second `present` set is disjoint from the first, same topic.)*
 - [x] Tapping Post N acknowledges the Nth candidate's text and removes the keyboard. *(ack verified by `test_select_acknowledges_chosen_candidate`; keyboard strip done in `callback_handler` via `edit_message_reply_markup(None)` — code-verified, live Telegram strip not exercised offline.)*
 - [x] `avoid` candidates are absent from the regenerated set. *(verified: `FakeGenerator` records `avoid==first batch`; new candidates disjoint from prior set in `test_regenerate_uses_avoid_with_previous_candidates`.)*
-- [x] Malformed/short model output does not crash the bot (handled error to user). *(verified: `test_short_output_retries_then_raises`, `test_non_json_output_raises`, `test_empty_response_raises` raise `GenerationError`; `Orchestrator.run` catches it and calls `bot.send_error` — `test_generation_failure_reports_error_and_no_session`.)*
+- [x] Malformed/short model output does not crash the bot (handled error to user). *(verified: `test_short_output_retries_then_raises`, `test_non_json_output_raises`, `test_empty_response_raises` raise `PostTextGenerationError`; `Orchestrator.run` catches it and calls `bot.send_error` — `test_generation_failure_reports_error_and_no_session`.)*
 
 ### Quality gates
 
-- [x] `pytest` green: `PostGenerator` unit (mock openai — returns n, honors `avoid`, handles bad output) + `Orchestrator` integration (generate→present, regen uses `avoid`). *(27 passed.)*
+- [x] `pytest` green: `PostTextGenerator` unit (mock openai — returns n, honors `avoid`, handles bad output) + `Orchestrator` integration (generate→present, regen uses `avoid`). *(27 passed.)*
 - [x] `python -m compileall .` no errors. *(exit 0.)*
 - [x] `ruff check .` no violations. *(All checks passed!)*
 

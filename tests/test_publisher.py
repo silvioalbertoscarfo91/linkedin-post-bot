@@ -190,3 +190,114 @@ def test_publish_no_post_id_raises(tmp_path):
     pub = LinkedInPublisher(client, "cid", "csec", token_path=path)
     with pytest.raises(PublishError):
         pub.publish("text")
+
+
+# --- publish_with_image (Task 02) -------------------------------------------
+
+
+def _register_upload_resp(
+    *, asset="urn:li:digitalmediaAsset:IMG1", upload_url="https://upload.example/u1"
+):
+    """A registerUpload success response shaped like LinkedIn's."""
+    return _resp(
+        status=200,
+        json_body={
+            "value": {
+                "asset": asset,
+                "uploadMechanism": {
+                    "com.linkedin.digitalmedia.uploading."
+                    "MediaUploadHttpRequest": {"uploadUrl": upload_url},
+                },
+            }
+        },
+    )
+
+
+def test_publish_with_image_runs_three_step_flow(tmp_path):
+    path = tmp_path / "linkedin_token.json"
+    _write_token(path)  # cached author_urn, valid token
+    client = MagicMock()
+    # First POST -> registerUpload, second POST -> ugcPosts.
+    client.post.side_effect = [
+        _register_upload_resp(
+            asset="urn:li:digitalmediaAsset:IMG1",
+            upload_url="https://upload.example/u1",
+        ),
+        _resp(status=201, headers={"x-restli-id": "urn:li:share:777"}),
+    ]
+    client.put.return_value = _resp(status=201)
+
+    pub = LinkedInPublisher(client, "cid", "csec", token_path=path)
+    url = pub.publish_with_image("Caption text", b"PNG-BYTES", alt_text="alt")
+
+    assert url == "https://www.linkedin.com/feed/update/urn:li:share:777"
+
+    # Step 1: registerUpload with the feedshare recipe + owner URN.
+    reg_args, reg_kwargs = client.post.call_args_list[0]
+    assert reg_args[0].startswith("https://api.linkedin.com/v2/assets")
+    reg_body = reg_kwargs["json"]["registerUploadRequest"]
+    assert reg_body["recipes"] == ["urn:li:digitalmediaRecipe:feedshare-image"]
+    assert reg_body["owner"] == "urn:li:person:ABC123"
+
+    # Step 2: PUT the raw bytes to the returned upload URL with bearer auth.
+    put_args, put_kwargs = client.put.call_args
+    assert put_args[0] == "https://upload.example/u1"
+    assert put_kwargs["content"] == b"PNG-BYTES"
+    assert put_kwargs["headers"]["Authorization"] == "Bearer valid-token"
+
+    # Step 3: ugcPosts as an IMAGE share referencing the asset URN + text.
+    post_args, post_kwargs = client.post.call_args_list[1]
+    assert post_args[0] == UGC_POSTS_URL
+    body = post_kwargs["json"]
+    assert body["author"] == "urn:li:person:ABC123"
+    share = body["specificContent"]["com.linkedin.ugc.ShareContent"]
+    assert share["shareCommentary"]["text"] == "Caption text"
+    assert share["shareMediaCategory"] == "IMAGE"
+    assert share["media"][0]["media"] == "urn:li:digitalmediaAsset:IMG1"
+    assert share["media"][0]["description"]["text"] == "alt"
+
+
+def test_publish_with_image_register_failure_raises_no_post(tmp_path):
+    path = tmp_path / "linkedin_token.json"
+    _write_token(path)
+    client = MagicMock()
+    client.post.return_value = _resp(status=500)
+
+    pub = LinkedInPublisher(client, "cid", "csec", token_path=path)
+    with pytest.raises(PublishError):
+        pub.publish_with_image("text", b"BYTES")
+
+    # No upload and no ugcPost attempted after a failed registerUpload.
+    client.put.assert_not_called()
+    assert client.post.call_count == 1
+
+
+def test_publish_with_image_upload_failure_raises_no_post(tmp_path):
+    path = tmp_path / "linkedin_token.json"
+    _write_token(path)
+    client = MagicMock()
+    client.post.side_effect = [_register_upload_resp()]
+    client.put.return_value = _resp(status=500)
+
+    pub = LinkedInPublisher(client, "cid", "csec", token_path=path)
+    with pytest.raises(PublishError):
+        pub.publish_with_image("text", b"BYTES")
+
+    # registerUpload happened, upload failed -> no ugcPost created.
+    assert client.post.call_count == 1
+    client.put.assert_called_once()
+
+
+def test_publish_with_image_post_failure_raises(tmp_path):
+    path = tmp_path / "linkedin_token.json"
+    _write_token(path)
+    client = MagicMock()
+    client.post.side_effect = [
+        _register_upload_resp(),
+        _resp(status=500),
+    ]
+    client.put.return_value = _resp(status=201)
+
+    pub = LinkedInPublisher(client, "cid", "csec", token_path=path)
+    with pytest.raises(PublishError):
+        pub.publish_with_image("text", b"BYTES")
