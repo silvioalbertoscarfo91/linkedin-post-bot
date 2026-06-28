@@ -1,7 +1,7 @@
-"""Candidate post generation via Claude.
+"""Candidate post generation via NVIDIA's OpenAI-compatible API.
 
 ``PostGenerator`` is a pure logic module: topic in, list of candidate strings
-out. It has no Telegram or LinkedIn knowledge. The ``anthropic`` client is
+out. It has no Telegram or LinkedIn knowledge. The ``openai`` client is
 injected so tests can mock the external boundary and stay offline/deterministic.
 """
 
@@ -13,9 +13,34 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-opus-4-8"
+
+def _unwrap_json(text: str) -> str:
+    """Strip markdown code fences / surrounding prose so ``json.loads`` succeeds.
+
+    Some models (e.g. Mistral) wrap JSON in ```json ... ``` fences or add a
+    sentence around it even when asked for raw JSON. Pull out the first JSON
+    object/array if a fence or prose is present; otherwise return as-is.
+    """
+    text = text.strip()
+    if text.startswith("```"):
+        # drop opening fence line (``` or ```json) and the closing fence
+        text = text.split("\n", 1)[-1] if "\n" in text else ""
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+        text = text.strip()
+    if not text.startswith(("{", "[")):
+        # locate the first JSON object/array embedded in surrounding prose
+        starts = [i for i in (text.find("{"), text.find("[")) if i != -1]
+        ends = [i for i in (text.rfind("}"), text.rfind("]")) if i != -1]
+        if starts and ends:
+            text = text[min(starts) : max(ends) + 1]
+    return text.strip()
+
+DEFAULT_MODEL = "mistralai/mistral-medium-3.5-128b"
 MAX_TOKENS = 4096
 MAX_ATTEMPTS = 2
+TEMPERATURE = 0.7
+TOP_P = 1.0
 
 SYSTEM_PROMPT = (
     "You write LinkedIn posts. Produce distinct, ready-to-publish candidate "
@@ -36,7 +61,7 @@ class GenerationError(RuntimeError):
 
 
 class PostGenerator:
-    """Generate candidate LinkedIn posts for a topic using Claude."""
+    """Generate candidate LinkedIn posts for a topic using NVIDIA's API."""
 
     def __init__(
         self,
@@ -72,11 +97,16 @@ class PostGenerator:
 
         last_error: str | None = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
-            response = self._client.messages.create(
+            response = self._client.chat.completions.create(
                 model=self._model,
                 max_tokens=self._max_tokens,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
             )
             try:
                 posts = self._parse(response, n)
@@ -107,12 +137,13 @@ class PostGenerator:
 
     @staticmethod
     def _extract_text(response: Any) -> str:
-        """Concatenate the text blocks of an ``anthropic`` message response."""
-        chunks: list[str] = []
-        for block in getattr(response, "content", []) or []:
-            if getattr(block, "type", None) == "text":
-                chunks.append(getattr(block, "text", "") or "")
-        return "".join(chunks).strip()
+        """Read the message content of an OpenAI-style chat completion response."""
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            return ""
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None) if message is not None else None
+        return _unwrap_json(content or "")
 
     def _parse(self, response: Any, n: int) -> list[str]:
         text = self._extract_text(response)

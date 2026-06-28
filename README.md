@@ -1,6 +1,6 @@
 # LinkedIn Post Automation Bot
 
-A Telegram-driven bot that generates LinkedIn post candidates with Claude and publishes
+A Telegram-driven bot that generates LinkedIn post candidates with NVIDIA's API and publishes
 a chosen one to your real LinkedIn profile. Send `/genera <topic>`, the bot replies with
 three candidates and inline buttons; tap one and it is published to LinkedIn, and the bot
 confirms with a link to the live post. Only a single authorized Telegram user is served.
@@ -38,10 +38,15 @@ Required:
 
 Optional:
 
-- `ANTHROPIC_API_KEY` — your Claude API key. Only `/genera` (Claude-generated
-  candidates) needs it. Leave it blank to run **manual-only**: `/posta` still publishes
-  your own text, and `/genera` simply replies that a key is required (no crash). The
-  daily rotation is also disabled without a key.
+- `NVIDIA_API_KEY` — your NVIDIA API key (an `nvapi-...` key). Get one for free at
+  <https://build.nvidia.com> (sign in, pick a model, and create an API key; the free tier
+  is enough to run this bot). Only `/genera` (model-generated candidates) needs it. Leave
+  it blank to run **manual-only**: `/posta` still publishes your own text, and `/genera`
+  simply replies that a key is required (no crash). The daily rotation is also disabled
+  without a key.
+- `NVIDIA_MODEL` — model id to use. Defaults to `mistralai/mistral-medium-3.5-128b`.
+- `NVIDIA_BASE_URL` — OpenAI-compatible endpoint. Defaults to
+  `https://integrate.api.nvidia.com/v1`.
 - `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI` — see the
   LinkedIn setup section below (needed to actually publish; not needed for `DRY_RUN`).
 - `DRY_RUN` — set to `true` to trial the publish flow without touching LinkedIn. Tapping
@@ -151,7 +156,7 @@ asking for one. Messages from any other account are ignored.
 
 ### Manual posting with `/posta`
 
-To publish text you wrote yourself (no Claude involved), send:
+To publish text you wrote yourself (no generation involved), send:
 
 ```
 /posta
@@ -161,7 +166,7 @@ The bot asks for the text; your **next** message is captured as the post body an
 as a preview with **Publish** / **Cancel** buttons. Tap **Publish** to post it to
 LinkedIn (the bot confirms with a link); tap **Cancel** to discard it (the buttons are
 removed and nothing is posted). Re-tapping a resolved message does nothing. Because
-`/posta` never calls Claude, it works even with no `ANTHROPIC_API_KEY` set.
+`/posta` never calls the generation API, it works even with no `NVIDIA_API_KEY` set.
 
 When `DRY_RUN=true`, tapping **Publish** (for either `/posta` or `/genera`) replies with
 exactly what *would* be published and makes no LinkedIn call — handy for trialing the

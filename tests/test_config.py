@@ -18,16 +18,31 @@ def test_loads_required_values():
 
 def test_loads_optional_placeholders():
     env = _base_env() | {
-        "ANTHROPIC_API_KEY": "sk-1",
+        "NVIDIA_API_KEY": "nvapi-1",
         "LINKEDIN_CLIENT_ID": "cid",
         "LINKEDIN_REDIRECT_URI": "http://localhost/cb",
     }
     cfg = load_config(env)
-    assert cfg.anthropic_api_key == "sk-1"
+    assert cfg.nvidia_api_key == "nvapi-1"
     assert cfg.linkedin_client_id == "cid"
     assert cfg.linkedin_redirect_uri == "http://localhost/cb"
     # Unset optional stays None.
     assert cfg.linkedin_client_secret is None
+
+
+def test_nvidia_defaults_and_overrides():
+    cfg = load_config(_base_env())
+    assert cfg.nvidia_api_key is None
+    assert cfg.nvidia_model == "mistralai/mistral-medium-3.5-128b"
+    assert cfg.nvidia_base_url == "https://integrate.api.nvidia.com/v1"
+
+    env = _base_env() | {
+        "NVIDIA_MODEL": "some/other-model",
+        "NVIDIA_BASE_URL": "https://example.test/v1",
+    }
+    cfg = load_config(env)
+    assert cfg.nvidia_model == "some/other-model"
+    assert cfg.nvidia_base_url == "https://example.test/v1"
 
 
 def test_missing_token_fails_fast():

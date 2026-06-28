@@ -29,10 +29,10 @@ logger = logging.getLogger(__name__)
 NO_TOPIC_REPLY = "Please provide a topic, e.g. /genera AI in finance"
 REGEN_LABEL = "Give me 3 more"
 
-# Shown when /genera is used but no Anthropic API key is configured. Manual
+# Shown when /genera is used but no NVIDIA API key is configured. Manual
 # posting via /posta still works without a key.
 NO_API_KEY_REPLY = (
-    "ANTHROPIC_API_KEY is not set, so I can't generate posts. "
+    "NVIDIA_API_KEY is not set, so I can't generate posts. "
     "Set it in your .env to use /genera, or use /posta to publish your own text."
 )
 PASTE_PROMPT = "Send me the post text in your next message, and I'll show you a preview."
@@ -166,7 +166,7 @@ async def genera_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if message is None:
         return
 
-    if not config.anthropic_api_key:
+    if not config.nvidia_api_key:
         await message.reply_text(NO_API_KEY_REPLY)
         return
 
@@ -186,8 +186,8 @@ async def posta_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Handle ``/posta``: ask the authorized user for text to publish manually.
 
     Sets a per-chat flag so the next plain message from the user is captured as
-    the post body (see :func:`manual_text_handler`). Bypasses Claude entirely,
-    so it works without an Anthropic API key.
+    the post body (see :func:`manual_text_handler`). Bypasses generation
+    entirely, so it works without a NVIDIA API key.
     """
     config: Config = context.application.bot_data["config"]
 
@@ -292,7 +292,7 @@ def build_application(config: Config, orchestrator=None) -> Application:
 def run(config: Config) -> None:
     """Build the application, wire the orchestrator, and run via long polling."""
     import httpx
-    from anthropic import Anthropic
+    from openai import OpenAI
 
     from .generator import PostGenerator
     from .orchestrator import Orchestrator
@@ -300,13 +300,15 @@ def run(config: Config) -> None:
 
     application = build_application(config)
 
-    # The Anthropic key is optional: without it /genera replies with a clear
+    # The NVIDIA key is optional: without it /genera replies with a clear
     # "key required" message (handled in genera_command) and only manual /posta
     # works. Only build the generator when a key is present.
     generator = None
-    if config.anthropic_api_key:
-        client = Anthropic(api_key=config.anthropic_api_key)
-        generator = PostGenerator(client, model=config.anthropic_model)
+    if config.nvidia_api_key:
+        client = OpenAI(
+            api_key=config.nvidia_api_key, base_url=config.nvidia_base_url
+        )
+        generator = PostGenerator(client, model=config.nvidia_model)
 
     bot = TelegramBot(application)
 
@@ -323,7 +325,7 @@ def run(config: Config) -> None:
     # Wire the daily scheduled rotation onto the *same* orchestrator/bot instance
     # the manual /genera command uses. Fails fast here if the topics file is
     # missing/empty (clear startup error, no silent crash at fire time).
-    # The rotation drives generation, so it is only enabled when an Anthropic
+    # The rotation drives generation, so it is only enabled when a NVIDIA
     # key is present; manual-only setups (no key) start without it.
     if generator is not None:
         from .rotation import TopicRotation
@@ -348,7 +350,7 @@ def run(config: Config) -> None:
         application.post_shutdown = _stop_scheduler
     else:
         logger.info(
-            "No ANTHROPIC_API_KEY set: scheduled rotation disabled, "
+            "No NVIDIA_API_KEY set: scheduled rotation disabled, "
             "manual /posta only."
         )
 

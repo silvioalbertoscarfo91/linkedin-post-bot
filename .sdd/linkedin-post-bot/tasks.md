@@ -48,7 +48,7 @@ generation → presentation → callback → regenerate loop.
 
 ### Implementation steps
 
-- [x] Implement `PostGenerator.generate(topic, n=3, avoid=None)` using `anthropic` SDK + system prompt for LinkedIn tone/length.
+- [x] Implement `PostGenerator.generate(topic, n=3, avoid=None)` using the `openai` SDK against NVIDIA's OpenAI-compatible API + system prompt for LinkedIn tone/length.
 - [x] Validate model output yields exactly `n` candidates; retry/raise on malformed output.
 - [x] Implement `TelegramBot.present(chat_id, posts)` rendering 3 numbered candidates + 4 inline buttons; callback data = `<session_id>:<action>` (`sel1|sel2|sel3|regen`).
 - [x] Session state map `{session_id: {topic, candidates, status}}`; status `open`.
@@ -65,7 +65,7 @@ generation → presentation → callback → regenerate loop.
 
 ### Quality gates
 
-- [x] `pytest` green: `PostGenerator` unit (mock anthropic — returns n, honors `avoid`, handles bad output) + `Orchestrator` integration (generate→present, regen uses `avoid`). *(27 passed.)*
+- [x] `pytest` green: `PostGenerator` unit (mock openai — returns n, honors `avoid`, handles bad output) + `Orchestrator` integration (generate→present, regen uses `avoid`). *(27 passed.)*
 - [x] `python -m compileall .` no errors. *(exit 0.)*
 - [x] `ruff check .` no violations. *(All checks passed!)*
 
@@ -143,16 +143,16 @@ via the existing LinkedInPublisher. The Anthropic API key becomes optional — o
 
 ### Implementation steps
 
-- [x] Make `ANTHROPIC_API_KEY` optional in config; `/genera` fails gracefully with a clear message if the key is missing, manual mode works without it. *(`anthropic_api_key` already `str | None`; `genera_command` now replies `NO_API_KEY_REPLY` when unset; `bot.run` builds the generator only when a key is present and disables the scheduler otherwise, so a manual-only setup starts cleanly.)*
+- [x] Make `NVIDIA_API_KEY` optional in config; `/genera` fails gracefully with a clear message if the key is missing, manual mode works without it. *(`nvidia_api_key` already `str | None`; `genera_command` now replies `NO_API_KEY_REPLY` when unset; `bot.run` builds the generator only when a key is present and disables the scheduler otherwise, so a manual-only setup starts cleanly.)*
 - [x] Add `DRY_RUN` env (default false) to config. *(`Config.dry_run` + `opt_bool("DRY_RUN", False)` accepting true/false/1/0/yes/no/on/off; invalid value raises `ConfigError`.)*
 - [x] `/posta` command (authorized user only): bot asks for text, captures the next plain message from that user as the post body (conversational state per chat/user). *(`posta_command` sets `chat_data[AWAITING_POST_KEY]` + replies `PASTE_PROMPT`; `manual_text_handler` (a `MessageHandler(filters.TEXT & ~filters.COMMAND)`) captures the next plain message only when awaiting and authorized, then clears the flag.)*
 - [x] Present the pasted text as a single candidate with Publish / Cancel inline buttons (reuse Orchestrator session-state + idempotency guard). *(`Orchestrator.present_manual` creates an `open` single-candidate `Session`; `TelegramBot.present_manual` renders the preview with a `_manual_keyboard` (`pub`/`cancel`); the existing non-open-session idempotency guard applies unchanged.)*
 - [x] On Publish: if `DRY_RUN` → reply "would publish:" + text, no LinkedIn call; else publish via `LinkedInPublisher` and confirm with link. On Cancel: drop session, strip keyboard. *(`_publish` short-circuits to `bot.confirm_dry_run` (no publisher call) when `dry_run`; `cancel` action sets status `cancelled` + `bot.cancel`; the callback handler strips the keyboard via `edit_message_reply_markup(None)` for all actions.)*
-- [x] README + `.env.example`: document `/posta`, `DRY_RUN`, and that the Anthropic key is optional for manual-only use. *(README "Manual posting with /posta" section + optional-env notes; `.env.example` marks `ANTHROPIC_API_KEY` optional and adds `DRY_RUN=false`.)*
+- [x] README + `.env.example`: document `/posta`, `DRY_RUN`, and that the NVIDIA key is optional for manual-only use. *(README "Manual posting with /posta" section + optional-env notes; `.env.example` marks `NVIDIA_API_KEY` optional and adds `DRY_RUN=false`.)*
 
 ### Acceptance criteria
 
-- [x] With no `ANTHROPIC_API_KEY` set, the bot starts and `/posta` works end-to-end; `/genera` replies with a clear "key required" message rather than crashing. *(verified: `test_genera_without_api_key_replies_key_required` — `genera_command` replies `NO_API_KEY_REPLY`, `orchestrator.run` not called; `bot.run` guards generator/scheduler construction behind a present key. Live Telegram start not exercised offline.)*
+- [x] With no `NVIDIA_API_KEY` set, the bot starts and `/posta` works end-to-end; `/genera` replies with a clear "key required" message rather than crashing. *(verified: `test_genera_without_api_key_replies_key_required` — `genera_command` replies `NO_API_KEY_REPLY`, `orchestrator.run` not called; `bot.run` guards generator/scheduler construction behind a present key. Live Telegram start not exercised offline.)*
 - [x] `/posta` → bot asks for text → user's next message is captured and presented with Publish / Cancel buttons. *(verified: `test_posta_prompts_and_sets_awaiting_flag` + `test_manual_text_captured_and_presented` — flag set, next text routed to `orchestrator.present_manual(text, chat_id)`; `test_present_manual_shows_single_candidate_with_buttons` confirms a single-candidate open session + `present_manual` render.)*
 - [x] With `DRY_RUN=true`, tapping Publish replies with the exact text and performs no LinkedIn call. *(verified: `test_dry_run_publish_makes_no_linkedin_call` + `test_dry_run_applies_to_generated_selection_too` — `publisher.publish` never called, `bot.confirm_dry_run` awaited with the exact text.)*
 - [x] With `DRY_RUN` false, tapping Publish calls the publisher once and replies with a confirmation link; failure surfaces a clear error and does not mark published. *(verified: `test_manual_publish_calls_publisher_and_confirms` (publish once + link) and `test_manual_publish_failure_stays_open_no_false_success` (error surfaced, status stays `open`).)*

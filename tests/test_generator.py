@@ -8,29 +8,34 @@ from linkedin_post_bot.generator import GenerationError, PostGenerator
 
 
 def _text_response(text):
-    """Build a fake anthropic message response with one text block."""
-    return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
+    """Build a fake OpenAI chat completion response with one message."""
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=text))]
+    )
 
 
 def _client_returning(*texts):
-    """Mock anthropic client whose messages.create returns the given texts in order."""
+    """Mock openai client whose chat.completions.create returns texts in order."""
     client = MagicMock()
-    client.messages.create.side_effect = [_text_response(t) for t in texts]
+    client.chat.completions.create.side_effect = [_text_response(t) for t in texts]
     return client
 
 
 def test_returns_exactly_n_candidates():
     payload = json.dumps({"posts": ["one", "two", "three"]})
     client = _client_returning(payload)
-    gen = PostGenerator(client, model="claude-opus-4-8")
+    gen = PostGenerator(client, model="mistralai/mistral-medium-3.5-128b")
 
     posts = gen.generate("AI in finance", n=3)
 
     assert posts == ["one", "two", "three"]
-    client.messages.create.assert_called_once()
-    kwargs = client.messages.create.call_args.kwargs
-    assert kwargs["model"] == "claude-opus-4-8"
-    assert kwargs["messages"][0]["role"] == "user"
+    client.chat.completions.create.assert_called_once()
+    kwargs = client.chat.completions.create.call_args.kwargs
+    assert kwargs["model"] == "mistralai/mistral-medium-3.5-128b"
+    assert kwargs["temperature"] == 0.7
+    assert kwargs["top_p"] == 1.0
+    assert kwargs["messages"][0]["role"] == "system"
+    assert kwargs["messages"][1]["role"] == "user"
 
 
 def test_avoid_candidates_included_in_request_context():
@@ -41,7 +46,7 @@ def test_avoid_candidates_included_in_request_context():
     avoid = ["old candidate alpha", "old candidate beta"]
     gen.generate("topic", n=3, avoid=avoid)
 
-    sent = client.messages.create.call_args.kwargs["messages"][0]["content"]
+    sent = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
     for old in avoid:
         assert old in sent
 
@@ -53,7 +58,7 @@ def test_avoid_not_present_when_empty():
 
     gen.generate("topic", n=3)
 
-    sent = client.messages.create.call_args.kwargs["messages"][0]["content"]
+    sent = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
     assert "previously-shown" not in sent
 
 
@@ -66,7 +71,7 @@ def test_short_output_retries_then_raises():
         gen.generate("topic", n=3)
 
     # Retried once after the first malformed response.
-    assert client.messages.create.call_count == 2
+    assert client.chat.completions.create.call_count == 2
 
 
 def test_short_output_then_valid_succeeds():
@@ -78,7 +83,7 @@ def test_short_output_then_valid_succeeds():
     posts = gen.generate("topic", n=3)
 
     assert posts == ["a", "b", "c"]
-    assert client.messages.create.call_count == 2
+    assert client.chat.completions.create.call_count == 2
 
 
 def test_non_json_output_raises():

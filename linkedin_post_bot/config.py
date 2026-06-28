@@ -24,9 +24,10 @@ class Config:
     telegram_bot_token: str
     telegram_allowed_user_id: int
 
-    # Claude generation (slice 02) + placeholders for LinkedIn publishing.
-    anthropic_api_key: str | None = None
-    anthropic_model: str = "claude-opus-4-8"
+    # NVIDIA generation (slice 02) + placeholders for LinkedIn publishing.
+    nvidia_api_key: str | None = None
+    nvidia_model: str = "mistralai/mistral-medium-3.5-128b"
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     linkedin_client_id: str | None = None
     linkedin_client_secret: str | None = None
     linkedin_redirect_uri: str | None = None
@@ -110,8 +111,9 @@ def load_config(env: dict[str, str] | None = None, *, use_dotenv: bool = True) -
     return Config(
         telegram_bot_token=token,
         telegram_allowed_user_id=allowed_user_id,
-        anthropic_api_key=opt("ANTHROPIC_API_KEY"),
-        anthropic_model=opt("ANTHROPIC_MODEL") or "claude-opus-4-8",
+        nvidia_api_key=opt("NVIDIA_API_KEY"),
+        nvidia_model=opt("NVIDIA_MODEL") or "mistralai/mistral-medium-3.5-128b",
+        nvidia_base_url=opt("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1",
         linkedin_client_id=opt("LINKEDIN_CLIENT_ID"),
         linkedin_client_secret=opt("LINKEDIN_CLIENT_SECRET"),
         linkedin_redirect_uri=opt("LINKEDIN_REDIRECT_URI"),

@@ -3,7 +3,7 @@
 ``LinkedInPublisher`` is the IO module that talks to the LinkedIn REST API. Like
 ``PostGenerator``, the external boundary (an ``httpx.Client``) is injected so
 tests can mock it and stay offline/deterministic. Nothing here knows about
-Telegram or Claude.
+Telegram or the generation API.
 
 Responsibilities:
 

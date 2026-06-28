@@ -2,7 +2,7 @@
 
 The ``Orchestrator`` owns per-session state and wires the pure ``PostGenerator``
 to the IO-shell ``TelegramBot`` and ``LinkedInPublisher``. It has no direct
-Telegram, anthropic, or LinkedIn HTTP knowledge beyond the small interfaces it
+Telegram, generation-API, or LinkedIn HTTP knowledge beyond the small interfaces it
 calls, so it can be integration-tested in-process with fakes.
 
 Slice 03 scope: selecting a candidate publishes it to LinkedIn and confirms
@@ -80,7 +80,7 @@ class Orchestrator:
     async def present_manual(self, text: str, chat_id: int) -> str:
         """Present a user-supplied post body with Publish / Cancel buttons.
 
-        This bypasses Claude entirely: the text is stored as the single
+        This bypasses generation entirely: the text is stored as the single
         candidate of a new ``open`` session, reusing the same session-state and
         idempotency machinery as the generated path.
         """

@@ -18,7 +18,7 @@ from linkedin_post_bot.config import Config
 CONFIG = Config(
     telegram_bot_token="tok",
     telegram_allowed_user_id=42,
-    anthropic_api_key="sk-test",
+    nvidia_api_key="nvapi-test",
 )
 
 
@@ -77,7 +77,7 @@ async def test_missing_user_ignored():
 
 @pytest.mark.asyncio
 async def test_genera_without_api_key_replies_key_required():
-    no_key = replace(CONFIG, anthropic_api_key=None)
+    no_key = replace(CONFIG, nvidia_api_key=None)
     update, context, message, orchestrator = _make_update(
         42, ["AI", "in", "finance"], config=no_key
     )

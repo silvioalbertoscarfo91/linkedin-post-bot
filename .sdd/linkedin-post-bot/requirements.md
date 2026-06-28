@@ -90,7 +90,7 @@ live post.
 **Language / stack:** Python 3.11+.
 
 **Key libraries:**
-- `anthropic` — Claude API client for post generation. Use latest Claude model (e.g. `claude-opus-4-8` or `claude-sonnet-4-6`) per `claude-api` reference at build time.
+- `openai` — OpenAI-compatible client for post generation against NVIDIA's API (`base_url=https://integrate.api.nvidia.com/v1`, model `mistralai/mistral-medium-3.5-128b`).
 - `python-telegram-bot` (v21+, async) — Telegram bot with inline keyboards and callback queries.
 - `requests` (or `httpx`) — LinkedIn REST calls (OAuth token exchange + post creation).
 - `APScheduler` — in-process cron-style scheduler for the daily run.
@@ -130,7 +130,7 @@ live post.
    - Manual path: `/genera <topic>` handler → `Orchestrator.run`.
 
 **Config / data flow:**
-- `.env`: `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI`.
+- `.env`: `NVIDIA_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI`.
 - `topics.txt` (or `topics.yaml`): rotation list for scheduled runs + persisted rotation index.
 - `linkedin_token.json`: access/refresh token + author URN (gitignored).
 - One-time OAuth bootstrap script (`auth_linkedin.py`) to obtain the first token via the authorization-code flow.
@@ -151,7 +151,7 @@ not assert on prompt wording or private helpers.
 
 **Modules with automated tests (all logic modules, per decision):**
 
-- `PostGenerator` — **unit**. Mock the `anthropic` client; assert it returns exactly `n`
+- `PostGenerator` — **unit**. Mock the `openai` client; assert it returns exactly `n`
   candidates, that `avoid` candidates are excluded from the request context, and that
   malformed model output is handled (e.g. fewer than `n` → error or retry).
 - `LinkedInPublisher` — **unit**. Mock HTTP. Assert: valid token → correct POST payload
